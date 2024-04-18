@@ -2,10 +2,10 @@ package rocketqueue
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,6 +22,11 @@ import (
 var (
 	mp map[string]queue.Queue
 	mu sync.RWMutex
+)
+
+const (
+	PropertyTimerDelaySec = "TIMER_DELAY_SEC"
+	// PropertyTimerDelayMs  = "TIMER_DELAY_MS"
 )
 
 type RocketQueue struct {
@@ -105,7 +110,6 @@ func (m *RocketQueue) initConsumer(ctx context.Context, topic, messageTag string
 					default:
 					}
 				}
-				fmt.Println("停止订阅消息")
 			}()
 		})
 	if err != nil {
@@ -155,7 +159,7 @@ func (m *RocketQueue) Enqueue(ctx context.Context, key string, message string, a
 	if err != nil {
 		return false, err
 	}
-	_, _, messageTag, timeLevel := getOption(args...)
+	_, _, messageTag, delay := getOption(args...)
 	log.Printf("messageTag: %v", messageTag)
 	if len(messageTag) > 0 {
 		tags := strings.Split(messageTag, "||")
@@ -166,16 +170,14 @@ func (m *RocketQueue) Enqueue(ctx context.Context, key string, message string, a
 				Body:  []byte(message),
 			}
 			msg.WithTag(tag)
-			// https://rocketmq.apache.org/docs/4.x/producer/04message3/
-			if timeLevel > 0 && timeLevel <= 18 {
-				msg.WithDelayTimeLevel(timeLevel)
+			if delay > 0 {
+				msg.WithProperty(PropertyTimerDelaySec, strconv.FormatInt(delay, 10))
 			}
 			log.Printf("send for tag: %v", tag)
 			res, err := m.Producer.SendSync(context.Background(), msg)
 			if err != nil {
 				return false, err
 			}
-			//logger.Info(ctx, "Enqueue", res.String())
 			log.Printf("Enqueue: %s %v", message, res.MsgID)
 		}
 	} else {
@@ -183,9 +185,8 @@ func (m *RocketQueue) Enqueue(ctx context.Context, key string, message string, a
 			Topic: key,
 			Body:  []byte(message),
 		}
-		// https://rocketmq.apache.org/docs/4.x/producer/04message3/
-		if timeLevel > 0 && timeLevel <= 18 {
-			msg.WithDelayTimeLevel(timeLevel)
+		if delay > 0 {
+			msg.WithProperty(PropertyTimerDelaySec, strconv.FormatInt(delay, 10))
 		}
 		res, err := m.Producer.SendSync(ctx, msg)
 		if err != nil {
@@ -246,34 +247,26 @@ func (m *RocketQueue) AckMsg(ctx context.Context, key string, token string, args
 
 // getOption 缺省参数统一获取
 //
-// args[0]是instanceId，args[1]是groupId，args[2]是messageTag, args[3]是delayTimeLevel
-func getOption(args ...interface{}) (instanceId, groupId, messageTag string, delayTimeLevel int) {
-	instanceId = ""
-	groupId = ""
-	messageTag = ""
-	delayTimeLevel = 0
+// args[0]是instanceId，args[1]是groupId，args[2]是messageTag, args[3]是delayTime 单位:秒
+func getOption(args ...interface{}) (instanceId, groupId, messageTag string, delaySecond int64) {
 	l := len(args)
 	if l > 0 {
-		tempInstance, ok := args[0].(string)
-		if ok {
+		if tempInstance, ok := args[0].(string); ok {
 			instanceId = tempInstance
 		}
 		if l > 1 {
-			tempGroup, ok := args[1].(string)
-			if ok {
+			if tempGroup, ok := args[1].(string); ok {
 				groupId = tempGroup
 			}
 		}
 		if l > 2 {
-			tempTag, ok := args[2].(string)
-			if ok {
+			if tempTag, ok := args[2].(string); ok {
 				messageTag = tempTag
 			}
 		}
 		if l > 3 {
-			tempDelayTimeLevel, ok := args[3].(int)
-			if ok {
-				delayTimeLevel = tempDelayTimeLevel
+			if tempDelayTime, ok := args[3].(int64); ok {
+				delaySecond = tempDelayTime
 			}
 		}
 	}
